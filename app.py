@@ -3,6 +3,7 @@ import edinet_client
 import ai_analyzer
 import io
 import sys
+import pandas as pd
 
 # Page Config
 st.set_page_config(
@@ -57,6 +58,51 @@ with st.sidebar:
         
     analyze_btn = st.button("分析開始", type="primary", disabled=not (gemini_api_key and edinet_api_key and ticker_input))
 
+    st.divider()
+    st.header("デバッグ & メンテナンス")
+    
+    if st.button("キャッシュをクリア"):
+        st.cache_data.clear()
+        st.success("キャッシュを削除しました。")
+        
+    if st.button("EDINET疎通テスト (2025-11-12)"):
+        if not edinet_api_key:
+            st.error("EDINET API Keyを入力してください")
+        else:
+            st.write("接続テスト実行中...")
+            try:
+                # Use a temp client for debug
+                debug_client = edinet_client.EdinetClient(api_key=edinet_api_key)
+                res = debug_client.debug_connection_test("2025-11-12")
+                
+                st.subheader("疎通テスト結果")
+                st.write(f"Status Code: {res['status_code']}")
+                st.write(f"URL: {res['url']}")
+                
+                if res['exception']:
+                    st.error(f"Exception: {res['exception']}")
+                
+                with st.expander("Response Headers"):
+                    st.json(res['headers'])
+                
+                with st.expander("JSON Metadata"):
+                    st.json(res['json_metadata'])
+
+                # Find 9110 in the raw data
+                if res['json_data'] and isinstance(res['json_data'], dict):
+                    results = res['json_data'].get('results', [])
+                    st.write(f"Total Results: {len(results)}")
+                    
+                    hits = [d for d in results if d.get('secCode') and str(d.get('secCode')).startswith('9110')]
+                    st.write(f"Hit count for '9110': {len(hits)}")
+                    if hits:
+                        st.json(hits)
+                else:
+                    st.error("JSON Data invalid or missing")
+                    
+            except Exception as e:
+                st.error(f"Test failed: {e}")
+
 # --- Main Logic ---
 
 if analyze_btn:
@@ -69,7 +115,7 @@ if analyze_btn:
         st.info(f"証券コード {ticker_input} の直近書類を検索中 ({lookback_days}日前まで)...")
         
         # Search directly by ticker in daily lists
-        latest_doc = ed_client.search_latest_document(
+        latest_doc, debug_logs = ed_client.search_latest_document(
             ticker_input, 
             lookback_days=lookback_days,
             include_semiannual=include_semiannual
@@ -77,11 +123,17 @@ if analyze_btn:
         
         if not latest_doc:
             st.error(f"過去 {lookback_days} 日以内に、指定された条件で書類が見つかりませんでした。")
-            with st.expander("詳細デバッグ情報"):
+            with st.expander("詳細デバッグ情報 (APIログ)"):
                 st.write(f"- 検索対象証券コード: {ticker_input} (先頭一致)")
-                st.write(f"- 検索期間: 過去 {lookback_days} 日間")
-                st.write(f"- 対象 docTypeCode: 120 (有報), 140 (四半期)" + (", 160 (半期)" if include_semiannual else ""))
-                st.write("- 除外条件: PDFなし, 訂正報告書, 取り下げ")
+                st.write(f"- 対象 docTypeCode: 120, 140" + (", 160" if include_semiannual else ""))
+                
+                # Show failures as a dataframe or list
+                if debug_logs:
+                    st.write("直近のAPIレスポンス状況:")
+                    df_log = pd.DataFrame(debug_logs)
+                    st.dataframe(df_log)
+                else:
+                    st.write("ログがありません。")
         else:
             doc_desc = latest_doc.get('docDescription', '不明な書類')
             submit_date = latest_doc.get('submitDateTime', '')
