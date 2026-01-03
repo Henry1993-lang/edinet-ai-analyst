@@ -1,0 +1,13 @@
+# Python / Venv
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Streamlit
+.streamlit/
+
+# Temp files
+*.pdf
+test_*.py
+requirements.txt.old
